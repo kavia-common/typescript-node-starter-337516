@@ -4,6 +4,7 @@ list_jira_tickets.py — Fetch and display Jira issues assigned to the current u
 
 By default, lists ALL tickets assigned to the current user (regardless of status).
 Use --open-only to restrict results to open/unresolved issues only.
+Use --csv to export results to a CSV file (default: jira_tickets.csv).
 
 Flow name: ListJiraTicketsFlow
 
@@ -14,15 +15,19 @@ Contract:
     - JIRA_API_TOKEN (env var): Atlassian API token for authentication
     - --all flag (CLI): List all tickets assigned to the user (default behavior)
     - --open-only flag (CLI): List only open/unresolved tickets
+    - --csv [FILE] flag (CLI): Export results to a CSV file (default: jira_tickets.csv)
   Outputs:
     - Formatted table of Jira issues printed to stdout
+    - Optionally, a CSV file containing the fetched issues
     - Exit code 0 on success, 1 on configuration/auth/network errors
   Errors:
     - Missing configuration → clear message listing which vars are missing
     - Authentication failure → actionable message with link to generate API token
     - Network/API errors → error message with HTTP status and response body excerpt
+    - CSV write failure → error message with details
   Side effects:
     - HTTP GET requests to the Jira REST API (read-only)
+    - Optionally writes a CSV file to the local filesystem
 
 Usage:
     # List ALL tickets assigned to you (default)
@@ -33,9 +38,19 @@ Usage:
 
     # List only open/unresolved tickets
     python3 utils/list_jira_tickets.py --open-only
+
+    # Export all tickets to default CSV (jira_tickets.csv)
+    python3 utils/list_jira_tickets.py --csv
+
+    # Export all tickets to a specific CSV file
+    python3 utils/list_jira_tickets.py --csv my_tickets.csv
+
+    # Export only open tickets to CSV
+    python3 utils/list_jira_tickets.py --open-only --csv open_issues.csv
 """
 
 import argparse
+import csv
 import json
 import logging
 import os
@@ -76,6 +91,12 @@ JIRA_FIELDS = "key,summary,status,priority,issuetype,updated,project"
 
 # Maximum results per request
 MAX_RESULTS = 50
+
+# Default CSV output file path
+DEFAULT_CSV_PATH = "jira_tickets.csv"
+
+# CSV column headers matching the JiraIssue fields
+CSV_HEADERS = ["Key", "Type", "Priority", "Status", "Project", "Summary", "Updated"]
 
 
 @dataclass
@@ -182,19 +203,21 @@ def _try_load_dotenv() -> None:
 # PUBLIC_INTERFACE
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     """
-    Parse command-line arguments to determine ticket listing mode.
+    Parse command-line arguments to determine ticket listing mode and CSV export options.
 
     Args:
         argv: Optional list of CLI arguments (defaults to sys.argv[1:]).
 
     Returns:
-        Namespace with 'open_only' boolean attribute.
+        Namespace with 'open_only' boolean attribute and 'csv' attribute
+        (None if not requested, or string file path for CSV export).
     """
     parser = argparse.ArgumentParser(
         description="List Jira tickets assigned to the current user.",
         epilog=(
             "By default, ALL tickets are listed regardless of status. "
-            "Use --open-only to restrict to open/unresolved issues."
+            "Use --open-only to restrict to open/unresolved issues. "
+            "Use --csv to export results to a CSV file."
         ),
     )
     group = parser.add_mutually_exclusive_group()
@@ -209,6 +232,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         default=False,
         help="List only open/unresolved tickets assigned to you.",
+    )
+    parser.add_argument(
+        "--csv",
+        nargs="?",
+        const=DEFAULT_CSV_PATH,
+        default=None,
+        metavar="FILE",
+        help=(
+            "Export fetched issues to a CSV file. "
+            f"If no file path is provided, defaults to '{DEFAULT_CSV_PATH}'."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -405,6 +439,61 @@ def _format_date(iso_date: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# CSV Export Layer
+# ---------------------------------------------------------------------------
+
+# PUBLIC_INTERFACE
+def export_issues_to_csv(issues: List[JiraIssue], file_path: str) -> str:
+    """
+    Export a list of JiraIssue objects to a CSV file.
+
+    Each row contains the issue's Key, Type, Priority, Status, Project, Summary,
+    and Updated date. The file is written with UTF-8 encoding and includes a
+    header row.
+
+    Args:
+        issues: List of parsed JiraIssue objects to export.
+        file_path: Destination file path for the CSV output.
+
+    Returns:
+        The absolute path of the written CSV file.
+
+    Raises:
+        OSError: If the file cannot be written (e.g., permission denied, invalid path).
+    """
+    # Resolve to absolute path for clear logging / user feedback
+    abs_path = os.path.abspath(file_path)
+
+    # Ensure parent directory exists
+    parent_dir = os.path.dirname(abs_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    logger.info("Exporting %d issue(s) to CSV: %s", len(issues), abs_path)
+
+    with open(abs_path, mode="w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.writer(csv_file)
+
+        # Write header row
+        writer.writerow(CSV_HEADERS)
+
+        # Write data rows
+        for issue in issues:
+            writer.writerow([
+                issue.key,
+                issue.issue_type,
+                issue.priority,
+                issue.status,
+                issue.project,
+                issue.summary,
+                _format_date(issue.updated),
+            ])
+
+    logger.info("CSV export complete: %s (%d rows)", abs_path, len(issues))
+    return abs_path
+
+
+# ---------------------------------------------------------------------------
 # Flow / Orchestration Layer — ListJiraTicketsFlow
 # ---------------------------------------------------------------------------
 
@@ -497,17 +586,20 @@ def main() -> None:
     CLI entry point for listing Jira tickets assigned to the current user.
 
     By default lists ALL tickets. Use --open-only to restrict to unresolved issues.
+    Use --csv [FILE] to export results to a CSV file.
 
     Responsibilities:
-        - Parse CLI arguments to determine listing mode
+        - Parse CLI arguments to determine listing mode and CSV export options
         - Load and validate configuration from environment
         - Invoke the ListJiraTicketsFlow
         - Format and display results
+        - Optionally export results to CSV
         - Map errors to appropriate exit codes
     """
     # Parse CLI arguments
     args = parse_args()
     open_only = args.open_only
+    csv_path = args.csv  # None if not requested, or a file path string
     jql = OPEN_TICKETS_JQL if open_only else ALL_TICKETS_JQL
     mode_label = "open-only" if open_only else "all"
 
@@ -517,6 +609,8 @@ def main() -> None:
     else:
         print("  Jira Tickets — All Statuses — Assigned to Current User")
     print("  JQL: " + jql)
+    if csv_path:
+        print(f"  CSV export: {csv_path}")
     print("=" * 80)
     print()
 
@@ -556,6 +650,15 @@ def main() -> None:
     print(f"\n(Showing {len(result.issues)} of {result.total} total)")
     print(f"Jira instance: {config.url}")
     print(f"User: {config.user_email}")
+
+    # Step 4: Export to CSV if requested
+    if csv_path is not None:
+        try:
+            written_path = export_issues_to_csv(result.issues, csv_path)
+            print(f"\nCSV exported successfully: {written_path} ({len(result.issues)} row(s))")
+        except OSError as exc:
+            print(f"\nERROR: Failed to write CSV file '{csv_path}': {exc}", file=sys.stderr)
+            sys.exit(1)
 
 
 if __name__ == "__main__":

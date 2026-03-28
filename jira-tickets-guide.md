@@ -124,6 +124,38 @@ This uses the JQL:
 assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC
 ```
 
+### Export Tickets to CSV
+
+Use the `--csv` flag to export fetched issues to a CSV file. If no file path is specified, the default output file is `jira_tickets.csv` in the current working directory.
+
+```bash
+# Export all tickets to the default CSV file (jira_tickets.csv)
+python3 utils/list_jira_tickets.py --csv
+
+# Export all tickets to a specific file path
+python3 utils/list_jira_tickets.py --csv my_tickets.csv
+
+# Export only open/unresolved tickets to CSV
+python3 utils/list_jira_tickets.py --open-only --csv open_issues.csv
+
+# Export to a path in another directory
+python3 utils/list_jira_tickets.py --csv reports/jira_export.csv
+```
+
+The CSV file contains the following columns:
+
+| Column | Description |
+|--------|-------------|
+| **Key** | Jira issue key (e.g., `PROJ-123`) |
+| **Type** | Issue type (e.g., Bug, Story, Task) |
+| **Priority** | Priority level (e.g., High, Medium, Low) |
+| **Status** | Current status (e.g., To Do, In Progress, Done) |
+| **Project** | Project name |
+| **Summary** | Issue title/summary |
+| **Updated** | Last updated date and time |
+
+The `--csv` flag can be combined with `--open-only` or used alone (which defaults to all tickets). The table output is always printed to stdout regardless of whether CSV export is enabled — the CSV is written in addition to the console output.
+
 ### CLI Flags Summary
 
 | Flag | Behavior |
@@ -131,10 +163,12 @@ assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC
 | *(no flag)* | List **all** tickets assigned to you (any status) |
 | `--all` | Same as no flag — list all tickets (explicit) |
 | `--open-only` | List only **open/unresolved** tickets |
+| `--csv` | Export results to `jira_tickets.csv` (default path) |
+| `--csv FILE` | Export results to the specified CSV file path |
 
 ### Output
 
-The script displays a formatted table with columns: **Key**, **Type**, **Priority**, **Status**, **Project**, **Summary**, and **Updated** date. If no issues are found, it prints a clear message. On authentication errors, it provides actionable troubleshooting steps.
+The script displays a formatted table with columns: **Key**, **Type**, **Priority**, **Status**, **Project**, **Summary**, and **Updated** date. If `--csv` is specified, the same data is also written to a CSV file. If no issues are found, it prints a clear message. On authentication errors, it provides actionable troubleshooting steps.
 
 ---
 
@@ -143,4 +177,5 @@ The script displays a formatted table with columns: **Key**, **Type**, **Priorit
 1. **Generate a valid Jira API token** from [Atlassian API Tokens page](https://id.atlassian.com/manage-profile/security/api-tokens)
 2. **Update the `.env` file** with the new token
 3. **Use any of the 3 options above** to list your assigned tickets
-4. If you still see 0 results after updating the token, verify that your Atlassian account has access to projects on the `kavia-team` Jira instance
+4. Use `--csv` to export your tickets for offline review or sharing
+5. If you still see 0 results after updating the token, verify that your Atlassian account has access to projects on the `kavia-team` Jira instance
