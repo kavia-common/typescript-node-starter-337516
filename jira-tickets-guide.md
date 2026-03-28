@@ -84,9 +84,15 @@ The API returns a JSON object with an `issues` array. Each issue contains:
 
 ---
 
-## Option 3: Use a Script to Fetch and Display Tickets
+## Option 3: Use a Script to Fetch and Display Open Tickets
 
-A utility script has been provided at `utils/list_jira_tickets.py`. To use it:
+A utility script has been provided at `utils/list_jira_tickets.py`. By default it fetches **only open/unresolved** issues assigned to the current user using the JQL:
+
+```
+assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC
+```
+
+To use it:
 
 ```bash
 # Set environment variables (or they'll be read from .env)
@@ -94,9 +100,11 @@ export JIRA_URL="https://kavia-team.atlassian.net"
 export JIRA_USER_EMAIL="aditimishra@kavia.ai"
 export JIRA_API_TOKEN="<your-valid-api-token>"
 
-# Run the script
+# Run the script — shows only open tickets assigned to you
 python3 utils/list_jira_tickets.py
 ```
+
+The script will display a formatted table with columns: Key, Type, Priority, Status, Project, Summary, and Updated date. If no open issues are found, it prints a clear message. On authentication errors, it provides actionable troubleshooting steps.
 
 ---
 
