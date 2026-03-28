@@ -453,19 +453,36 @@ def export_issues_to_csv(issues: List[JiraIssue], file_path: str) -> str:
     Export a list of JiraIssue objects to a CSV file.
 
     Each row contains the issue's Key, Type, Priority, Status, Project, Summary,
-    and Updated date. The file is written with UTF-8 encoding and includes a
-    header row.
+    and Updated date. The file is written with UTF-8-sig encoding (includes a BOM
+    for better compatibility with Excel and other spreadsheet apps) and includes
+    a header row.
+
+    If the issues list is empty, no file is written and an empty string is
+    returned so the caller can distinguish "nothing to export" from a successful
+    export.
 
     Args:
         issues: List of parsed JiraIssue objects to export.
         file_path: Destination file path for the CSV output.
 
     Returns:
-        The absolute path of the written CSV file.
+        The absolute path of the written CSV file, or an empty string if
+        there were no issues to export.
 
     Raises:
         OSError: If the file cannot be written (e.g., permission denied, invalid path).
     """
+    # Guard: do not create a file when there is nothing to export.
+    # A CSV with only a header row is confusing and looks "empty" to users.
+    if not issues:
+        logger.warning(
+            "No issues to export — skipping CSV write to '%s'. "
+            "The Jira query returned zero results; verify your API token "
+            "and account permissions.",
+            file_path,
+        )
+        return ""
+
     # Resolve to absolute path for clear logging / user feedback
     abs_path = os.path.abspath(file_path)
 
@@ -476,7 +493,10 @@ def export_issues_to_csv(issues: List[JiraIssue], file_path: str) -> str:
 
     logger.info("Exporting %d issue(s) to CSV: %s", len(issues), abs_path)
 
-    with open(abs_path, mode="w", newline="", encoding="utf-8") as csv_file:
+    # Use utf-8-sig encoding to write a UTF-8 BOM at the start of the file.
+    # This helps spreadsheet applications (e.g., Microsoft Excel) correctly
+    # detect the file encoding and display special characters properly.
+    with open(abs_path, mode="w", newline="", encoding="utf-8-sig") as csv_file:
         writer = csv.writer(csv_file)
 
         # Write header row
@@ -494,7 +514,7 @@ def export_issues_to_csv(issues: List[JiraIssue], file_path: str) -> str:
                 _format_date(issue.updated),
             ])
 
-    logger.info("CSV export complete: %s (%d rows)", abs_path, len(issues))
+    logger.info("CSV export complete: %s (%d data rows + header)", abs_path, len(issues))
     return abs_path
 
 
@@ -661,15 +681,31 @@ def main() -> None:
 
     # Step 4: Export to CSV if requested
     if csv_path is not None:
-        try:
-            written_path = export_issues_to_csv(result.issues, csv_path)
+        if not result.issues:
+            # No issues to export — inform the user clearly instead of
+            # writing a CSV with only a header row (which looks broken).
             print(f"\n{'=' * 80}")
-            print(f"  CSV exported successfully ({len(result.issues)} row(s))")
-            print(f"  File location: {written_path}")
+            print("  CSV NOT exported — no issues to write.")
+            print("  The Jira query returned 0 results. Possible causes:")
+            print("    - JIRA_API_TOKEN may be invalid or expired")
+            print("    - Your account may lack project permissions")
+            print("    - No tickets are currently assigned to you")
+            print(f"  Target was: {csv_abs_path}")
             print(f"{'=' * 80}")
-        except OSError as exc:
-            print(f"\nERROR: Failed to write CSV file '{csv_path}': {exc}", file=sys.stderr)
-            sys.exit(1)
+        else:
+            try:
+                written_path = export_issues_to_csv(result.issues, csv_path)
+                if written_path:
+                    print(f"\n{'=' * 80}")
+                    print(f"  CSV exported successfully ({len(result.issues)} issue(s))")
+                    print(f"  File location: {written_path}")
+                    print(f"{'=' * 80}")
+                else:
+                    # Defensive: export_issues_to_csv returned empty string
+                    print("\n  CSV export skipped — no data to write.")
+            except OSError as exc:
+                print(f"\nERROR: Failed to write CSV file '{csv_path}': {exc}", file=sys.stderr)
+                sys.exit(1)
 
 
 if __name__ == "__main__":
