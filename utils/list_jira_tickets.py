@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """
-list_jira_tickets.py — Fetch and display open/unresolved Jira issues assigned to the current user.
+list_jira_tickets.py — Fetch and display Jira issues assigned to the current user.
 
-Flow name: ListOpenJiraTicketsFlow
+By default, lists ALL tickets assigned to the current user (regardless of status).
+Use --open-only to restrict results to open/unresolved issues only.
+
+Flow name: ListJiraTicketsFlow
 
 Contract:
   Inputs:
     - JIRA_URL (env var): Base URL for the Jira instance (e.g., https://kavia-team.atlassian.net)
     - JIRA_USER_EMAIL (env var): Atlassian account email for authentication
     - JIRA_API_TOKEN (env var): Atlassian API token for authentication
+    - --all flag (CLI): List all tickets assigned to the user (default behavior)
+    - --open-only flag (CLI): List only open/unresolved tickets
   Outputs:
-    - Formatted table of open Jira issues printed to stdout
+    - Formatted table of Jira issues printed to stdout
     - Exit code 0 on success, 1 on configuration/auth/network errors
   Errors:
     - Missing configuration → clear message listing which vars are missing
@@ -20,9 +25,17 @@ Contract:
     - HTTP GET requests to the Jira REST API (read-only)
 
 Usage:
+    # List ALL tickets assigned to you (default)
     python3 utils/list_jira_tickets.py
+
+    # Explicitly list all tickets
+    python3 utils/list_jira_tickets.py --all
+
+    # List only open/unresolved tickets
+    python3 utils/list_jira_tickets.py --open-only
 """
 
+import argparse
 import json
 import logging
 import os
@@ -43,13 +56,17 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-logger = logging.getLogger("ListOpenJiraTicketsFlow")
+logger = logging.getLogger("ListJiraTicketsFlow")
 
 # ---------------------------------------------------------------------------
 # Configuration (Boundary Layer)
 # ---------------------------------------------------------------------------
 
-# JQL query: open/unresolved issues assigned to the current user, ordered by last update
+# JQL queries for different modes
+ALL_TICKETS_JQL = (
+    'assignee = currentUser() ORDER BY updated DESC'
+)
+
 OPEN_TICKETS_JQL = (
     'assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC'
 )
@@ -88,7 +105,7 @@ class JiraIssue:
 
 @dataclass
 class ListTicketsResult:
-    """Result object from the ListOpenJiraTicketsFlow."""
+    """Result object from the ListJiraTicketsFlow."""
     success: bool
     issues: List[JiraIssue] = field(default_factory=list)
     total: int = 0
@@ -156,6 +173,44 @@ def _try_load_dotenv() -> None:
                 return
     except ImportError:
         pass  # python-dotenv not installed; rely on exported env vars
+
+
+# ---------------------------------------------------------------------------
+# CLI Argument Parsing
+# ---------------------------------------------------------------------------
+
+# PUBLIC_INTERFACE
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """
+    Parse command-line arguments to determine ticket listing mode.
+
+    Args:
+        argv: Optional list of CLI arguments (defaults to sys.argv[1:]).
+
+    Returns:
+        Namespace with 'open_only' boolean attribute.
+    """
+    parser = argparse.ArgumentParser(
+        description="List Jira tickets assigned to the current user.",
+        epilog=(
+            "By default, ALL tickets are listed regardless of status. "
+            "Use --open-only to restrict to open/unresolved issues."
+        ),
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--all",
+        action="store_true",
+        default=True,
+        help="List all tickets assigned to you, regardless of status (default).",
+    )
+    group.add_argument(
+        "--open-only",
+        action="store_true",
+        default=False,
+        help="List only open/unresolved tickets assigned to you.",
+    )
+    return parser.parse_args(argv)
 
 
 # ---------------------------------------------------------------------------
@@ -280,18 +335,21 @@ def _safe_nested(data: Dict, outer_key: str, inner_key: str, default: str = "N/A
 # ---------------------------------------------------------------------------
 
 # PUBLIC_INTERFACE
-def format_issues_table(issues: List[JiraIssue]) -> str:
+def format_issues_table(issues: List[JiraIssue], mode_label: str = "all") -> str:
     """
     Format a list of JiraIssue objects into a human-readable table string.
 
     Args:
         issues: List of parsed JiraIssue objects.
+        mode_label: A label describing the current listing mode (e.g., "all" or "open-only").
 
     Returns:
         Formatted table string ready for stdout.
     """
     if not issues:
-        return "No open/unresolved issues found assigned to you."
+        if mode_label == "open-only":
+            return "No open/unresolved issues found assigned to you."
+        return "No issues found assigned to you."
 
     # Column definitions: (header, accessor, min_width)
     columns = [
@@ -347,19 +405,23 @@ def _format_date(iso_date: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Flow / Orchestration Layer — ListOpenJiraTicketsFlow
+# Flow / Orchestration Layer — ListJiraTicketsFlow
 # ---------------------------------------------------------------------------
 
 # PUBLIC_INTERFACE
-def list_open_jira_tickets(config: JiraConfig) -> ListTicketsResult:
+def list_jira_tickets(config: JiraConfig, open_only: bool = False) -> ListTicketsResult:
     """
-    Orchestrate fetching and parsing of open/unresolved Jira tickets assigned to the current user.
+    Orchestrate fetching and parsing of Jira tickets assigned to the current user.
 
-    Flow: ListOpenJiraTicketsFlow
+    By default fetches ALL tickets (any status). When open_only=True, fetches only
+    open/unresolved tickets.
+
+    Flow: ListJiraTicketsFlow
     Entrypoint: This function.
 
     Args:
         config: Validated JiraConfig.
+        open_only: If True, restrict to open/unresolved tickets only.
 
     Returns:
         ListTicketsResult with success status, parsed issues, and total count.
@@ -369,42 +431,61 @@ def list_open_jira_tickets(config: JiraConfig) -> ListTicketsResult:
         2. Network error (timeout, DNS) → result.error_message set
         3. Unexpected API response format → result.error_message set
     """
-    logger.info("ListOpenJiraTicketsFlow — START (user=%s)", config.user_email)
+    jql = OPEN_TICKETS_JQL if open_only else ALL_TICKETS_JQL
+    mode = "open-only" if open_only else "all"
+    logger.info("ListJiraTicketsFlow — START (user=%s, mode=%s)", config.user_email, mode)
 
     try:
-        # Step 1: Fetch raw issues from Jira API using open-tickets JQL
-        raw_response = fetch_issues_from_jira(config, jql=OPEN_TICKETS_JQL)
+        # Step 1: Fetch raw issues from Jira API
+        raw_response = fetch_issues_from_jira(config, jql=jql)
         total = raw_response.get("total", 0)
-        logger.info("ListOpenJiraTicketsFlow — API returned total=%d issues", total)
+        logger.info("ListJiraTicketsFlow — API returned total=%d issues", total)
 
         # Step 2: Parse raw response into structured issue objects
         issues = parse_issues(raw_response)
-        logger.info("ListOpenJiraTicketsFlow — Parsed %d issues", len(issues))
+        logger.info("ListJiraTicketsFlow — Parsed %d issues", len(issues))
 
         # Step 3: Return structured result
         result = ListTicketsResult(success=True, issues=issues, total=total)
-        logger.info("ListOpenJiraTicketsFlow — END (success, %d issues)", len(issues))
+        logger.info("ListJiraTicketsFlow — END (success, %d issues)", len(issues))
         return result
 
     except requests.exceptions.HTTPError as exc:
         error_msg = f"HTTP error from Jira API: {exc}"
-        logger.error("ListOpenJiraTicketsFlow — FAILED: %s", error_msg)
+        logger.error("ListJiraTicketsFlow — FAILED: %s", error_msg)
         return ListTicketsResult(success=False, error_message=error_msg)
 
     except requests.exceptions.ConnectionError as exc:
         error_msg = f"Connection error reaching Jira: {exc}"
-        logger.error("ListOpenJiraTicketsFlow — FAILED: %s", error_msg)
+        logger.error("ListJiraTicketsFlow — FAILED: %s", error_msg)
         return ListTicketsResult(success=False, error_message=error_msg)
 
     except requests.exceptions.Timeout as exc:
         error_msg = f"Timeout reaching Jira API: {exc}"
-        logger.error("ListOpenJiraTicketsFlow — FAILED: %s", error_msg)
+        logger.error("ListJiraTicketsFlow — FAILED: %s", error_msg)
         return ListTicketsResult(success=False, error_message=error_msg)
 
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         error_msg = f"Unexpected response format from Jira API: {exc}"
-        logger.error("ListOpenJiraTicketsFlow — FAILED: %s", error_msg)
+        logger.error("ListJiraTicketsFlow — FAILED: %s", error_msg)
         return ListTicketsResult(success=False, error_message=error_msg)
+
+
+# Backward-compatible alias for the old function name
+# PUBLIC_INTERFACE
+def list_open_jira_tickets(config: JiraConfig) -> ListTicketsResult:
+    """
+    Backward-compatible wrapper that lists only open/unresolved Jira tickets.
+
+    Equivalent to calling list_jira_tickets(config, open_only=True).
+
+    Args:
+        config: Validated JiraConfig.
+
+    Returns:
+        ListTicketsResult with only open/unresolved issues.
+    """
+    return list_jira_tickets(config, open_only=True)
 
 
 # ---------------------------------------------------------------------------
@@ -413,17 +494,29 @@ def list_open_jira_tickets(config: JiraConfig) -> ListTicketsResult:
 
 def main() -> None:
     """
-    CLI entry point for listing open Jira tickets assigned to the current user.
+    CLI entry point for listing Jira tickets assigned to the current user.
+
+    By default lists ALL tickets. Use --open-only to restrict to unresolved issues.
 
     Responsibilities:
+        - Parse CLI arguments to determine listing mode
         - Load and validate configuration from environment
-        - Invoke the ListOpenJiraTicketsFlow
+        - Invoke the ListJiraTicketsFlow
         - Format and display results
         - Map errors to appropriate exit codes
     """
+    # Parse CLI arguments
+    args = parse_args()
+    open_only = args.open_only
+    jql = OPEN_TICKETS_JQL if open_only else ALL_TICKETS_JQL
+    mode_label = "open-only" if open_only else "all"
+
     print("=" * 80)
-    print("  Jira Open Tickets — Assigned to Current User")
-    print("  JQL: " + OPEN_TICKETS_JQL)
+    if open_only:
+        print("  Jira Tickets — Open/Unresolved — Assigned to Current User")
+    else:
+        print("  Jira Tickets — All Statuses — Assigned to Current User")
+    print("  JQL: " + jql)
     print("=" * 80)
     print()
 
@@ -431,7 +524,7 @@ def main() -> None:
     config = load_config()
 
     # Step 2: Execute the flow
-    result = list_open_jira_tickets(config)
+    result = list_jira_tickets(config, open_only=open_only)
 
     # Step 3: Display results or error
     if not result.success:
@@ -447,12 +540,18 @@ def main() -> None:
         )
         sys.exit(1)
 
-    print(f"Found {result.total} open/unresolved issue(s) assigned to you.\n")
+    if open_only:
+        print(f"Found {result.total} open/unresolved issue(s) assigned to you.\n")
+    else:
+        print(f"Found {result.total} issue(s) assigned to you (all statuses).\n")
 
     if result.issues:
-        print(format_issues_table(result.issues))
+        print(format_issues_table(result.issues, mode_label=mode_label))
     else:
-        print("No open/unresolved issues found assigned to you.")
+        if open_only:
+            print("No open/unresolved issues found assigned to you.")
+        else:
+            print("No issues found assigned to you.")
 
     print(f"\n(Showing {len(result.issues)} of {result.total} total)")
     print(f"Jira instance: {config.url}")

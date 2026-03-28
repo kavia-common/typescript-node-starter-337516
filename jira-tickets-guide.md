@@ -52,7 +52,7 @@ This will show all Jira tickets assigned to you, sorted by most recently updated
 | What you want | JQL Query |
 |---------------|-----------|
 | All tickets assigned to me | `assignee = currentUser() ORDER BY updated DESC` |
-| Only open tickets | `assignee = currentUser() AND status != Done ORDER BY updated DESC` |
+| Only open tickets | `assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC` |
 | Tickets in a specific project | `assignee = currentUser() AND project = "PROJECT_KEY" ORDER BY updated DESC` |
 | Tickets updated in last 7 days | `assignee = currentUser() AND updated >= -7d ORDER BY updated DESC` |
 | High priority tickets | `assignee = currentUser() AND priority in (High, Highest) ORDER BY updated DESC` |
@@ -84,15 +84,17 @@ The API returns a JSON object with an `issues` array. Each issue contains:
 
 ---
 
-## Option 3: Use a Script to Fetch and Display Open Tickets
+## Option 3: Use the Script to Fetch and Display Tickets
 
-A utility script has been provided at `utils/list_jira_tickets.py`. By default it fetches **only open/unresolved** issues assigned to the current user using the JQL:
+A utility script is provided at `utils/list_jira_tickets.py`.
+
+### Default: Show ALL Tickets Assigned to You
+
+By default the script now fetches **all tickets** (any status) assigned to the current user using the JQL:
 
 ```
-assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC
+assignee = currentUser() ORDER BY updated DESC
 ```
-
-To use it:
 
 ```bash
 # Set environment variables (or they'll be read from .env)
@@ -100,11 +102,39 @@ export JIRA_URL="https://kavia-team.atlassian.net"
 export JIRA_USER_EMAIL="aditimishra@kavia.ai"
 export JIRA_API_TOKEN="<your-valid-api-token>"
 
-# Run the script — shows only open tickets assigned to you
+# List ALL tickets assigned to you (default)
 python3 utils/list_jira_tickets.py
+
+# Equivalent — explicitly pass --all
+python3 utils/list_jira_tickets.py --all
 ```
 
-The script will display a formatted table with columns: Key, Type, Priority, Status, Project, Summary, and Updated date. If no open issues are found, it prints a clear message. On authentication errors, it provides actionable troubleshooting steps.
+### Open-Only Mode
+
+To restrict to open/unresolved tickets only (the previous default behavior), use the `--open-only` flag:
+
+```bash
+# List only open/unresolved tickets
+python3 utils/list_jira_tickets.py --open-only
+```
+
+This uses the JQL:
+
+```
+assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC
+```
+
+### CLI Flags Summary
+
+| Flag | Behavior |
+|------|----------|
+| *(no flag)* | List **all** tickets assigned to you (any status) |
+| `--all` | Same as no flag — list all tickets (explicit) |
+| `--open-only` | List only **open/unresolved** tickets |
+
+### Output
+
+The script displays a formatted table with columns: **Key**, **Type**, **Priority**, **Status**, **Project**, **Summary**, and **Updated** date. If no issues are found, it prints a clear message. On authentication errors, it provides actionable troubleshooting steps.
 
 ---
 
