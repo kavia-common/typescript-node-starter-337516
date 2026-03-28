@@ -126,10 +126,12 @@ assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC
 
 ### Export Tickets to CSV
 
-Use the `--csv` flag to export fetched issues to a CSV file. If no file path is specified, the default output file is `jira_tickets.csv` in the current working directory.
+Use the `--csv` flag to export fetched issues to a CSV file. If no file path is specified, the default output file is `jira_tickets.csv` **inside the project root directory** (i.e., the same directory that contains `utils/`, `src/`, and `package.json`). This ensures the file always lands in a predictable, repo-local location regardless of where you run the command from.
+
+> **Finding your CSV:** The script always prints the **absolute file path** of the exported CSV both before and after the export. Look for the `File location:` line in the output.
 
 ```bash
-# Export all tickets to the default CSV file (jira_tickets.csv)
+# Export all tickets to the default CSV file (project_root/jira_tickets.csv)
 python3 utils/list_jira_tickets.py --csv
 
 # Export all tickets to a specific file path
@@ -163,8 +165,8 @@ The `--csv` flag can be combined with `--open-only` or used alone (which default
 | *(no flag)* | List **all** tickets assigned to you (any status) |
 | `--all` | Same as no flag — list all tickets (explicit) |
 | `--open-only` | List only **open/unresolved** tickets |
-| `--csv` | Export results to `jira_tickets.csv` (default path) |
-| `--csv FILE` | Export results to the specified CSV file path |
+| `--csv` | Export results to `jira_tickets.csv` in the **project root directory** |
+| `--csv FILE` | Export results to the specified CSV file path (absolute or relative) |
 
 ### Output
 

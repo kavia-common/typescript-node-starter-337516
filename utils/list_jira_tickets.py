@@ -15,7 +15,7 @@ Contract:
     - JIRA_API_TOKEN (env var): Atlassian API token for authentication
     - --all flag (CLI): List all tickets assigned to the user (default behavior)
     - --open-only flag (CLI): List only open/unresolved tickets
-    - --csv [FILE] flag (CLI): Export results to a CSV file (default: jira_tickets.csv)
+    - --csv [FILE] flag (CLI): Export results to a CSV file (default: jira_tickets.csv in project root)
   Outputs:
     - Formatted table of Jira issues printed to stdout
     - Optionally, a CSV file containing the fetched issues
@@ -92,8 +92,12 @@ JIRA_FIELDS = "key,summary,status,priority,issuetype,updated,project"
 # Maximum results per request
 MAX_RESULTS = 50
 
-# Default CSV output file path
-DEFAULT_CSV_PATH = "jira_tickets.csv"
+# Default CSV output file path — resolved relative to the project root
+# (the directory containing this script's parent folder) so the file always
+# lands in a predictable, repo-local location regardless of the caller's cwd.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)  # one level up from utils/
+DEFAULT_CSV_PATH = os.path.join(_PROJECT_ROOT, "jira_tickets.csv")
 
 # CSV column headers matching the JiraIssue fields
 CSV_HEADERS = ["Key", "Type", "Priority", "Status", "Project", "Summary", "Updated"]
@@ -241,7 +245,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         metavar="FILE",
         help=(
             "Export fetched issues to a CSV file. "
-            f"If no file path is provided, defaults to '{DEFAULT_CSV_PATH}'."
+            "If no file path is provided, defaults to 'jira_tickets.csv' "
+            "in the project root directory (next to utils/, src/, package.json)."
         ),
     )
     return parser.parse_args(argv)
@@ -603,14 +608,17 @@ def main() -> None:
     jql = OPEN_TICKETS_JQL if open_only else ALL_TICKETS_JQL
     mode_label = "open-only" if open_only else "all"
 
+    # Resolve the CSV output path early so we can display it clearly
+    csv_abs_path = os.path.abspath(csv_path) if csv_path else None
+
     print("=" * 80)
     if open_only:
         print("  Jira Tickets — Open/Unresolved — Assigned to Current User")
     else:
         print("  Jira Tickets — All Statuses — Assigned to Current User")
     print("  JQL: " + jql)
-    if csv_path:
-        print(f"  CSV export: {csv_path}")
+    if csv_abs_path:
+        print(f"  CSV export target: {csv_abs_path}")
     print("=" * 80)
     print()
 
@@ -655,7 +663,10 @@ def main() -> None:
     if csv_path is not None:
         try:
             written_path = export_issues_to_csv(result.issues, csv_path)
-            print(f"\nCSV exported successfully: {written_path} ({len(result.issues)} row(s))")
+            print(f"\n{'=' * 80}")
+            print(f"  CSV exported successfully ({len(result.issues)} row(s))")
+            print(f"  File location: {written_path}")
+            print(f"{'=' * 80}")
         except OSError as exc:
             print(f"\nERROR: Failed to write CSV file '{csv_path}': {exc}", file=sys.stderr)
             sys.exit(1)
