@@ -11,7 +11,9 @@ console.log(`The answer is: ${Mathematic.add(2, 3)}`);
 startServerFromEnv()
   .then(({ host, port, healthcheckPath }) => {
     // eslint-disable-next-line no-console
-    console.log(`HTTP server listening on http://${host}:${port} (health: ${healthcheckPath})`);
+    console.log(
+      `HTTP server listening on http://${host}:${port} (health: ${healthcheckPath})`
+    );
   })
   .catch((err: unknown) => {
     // eslint-disable-next-line no-console
