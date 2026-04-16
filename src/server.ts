@@ -40,7 +40,8 @@ export function startServerFromEnv(): Promise<StartServerResult> {
   // Be defensive: PreviewManager always provides PORT, but if it's malformed we still want
   // to bind to a sensible default instead of crashing or listening on NaN.
   const parsedPort = Number.parseInt((process.env.PORT ?? '').trim(), 10);
-  const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3001;
+  const port =
+    Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3001;
   const healthcheckPath = normalizeHealthcheckPath(
     process.env.HEALTHCHECK_PATH ?? '/healthz'
   );
